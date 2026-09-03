@@ -28,7 +28,7 @@ npm test
 | Map loading | grid query pending | [`WeatherMap.tsx`](src/components/WeatherMap.tsx) |
 | Map failed | grid query rejected | quiet inline note + retry, never an alert |
 | Map empty | grid returned no readings | [`WeatherMap.tsx`](src/components/WeatherMap.tsx) |
-| Basemap absent | coastline chunk still loading, or inland | draws nothing, says nothing |
+| Basemap absent | coastline or places chunk still loading | draws nothing, says nothing |
 
 ## Five decisions worth stealing
 
@@ -112,6 +112,53 @@ response would render a subtly ragged lattice.
 retry budget, nothing waits on it. A failed grid is a one-line note with a retry —
 not an alert and not a red box, because the forecast above it is still correct and
 there is nothing the reader must act on.
+
+### Making it readable
+
+Two things separate a map from a coloured grid, and the first version had neither.
+
+**The surface is interpolated, not tiled.** 81 readings drawn as 81 rectangles reads
+as a mosaic, which is a claim about the weather that is false: temperature does not
+step at cell boundaries. [`field.ts`](src/components/field.ts) bilinearly upsamples
+the grid 4x into a 32x32 lattice (plus a one-cell ring outside the frame, so the
+finishing blur has material at the edges instead of fading to transparent). The blur
+stays below one interpolated cell — enough to kill the remaining seams, not enough to
+invent structure the samples do not support.
+
+Interpolation is for *display only*, and the code keeps that line sharp:
+
+- Hit targets stay at the 9x9 sample resolution, so the hover readout can only ever
+  report a measurement, never a pixel the renderer made up.
+- A missing corner re-weights its neighbours rather than returning null, so one gap
+  does not punch a hole through a fully-sampled region.
+- `sampleAt` refuses to extrapolate outside the requested box — clamping there would
+  label a town with weather from somewhere the request never covered.
+- Bilinear cannot overshoot, so the surface never shows a temperature outside the
+  measured range. There is a test for exactly that.
+
+**Labels are the reference points.** "North of Providence" means something; "41.8 N"
+does not. 7342 Natural Earth populated places ship as flat `[name, lon, lat, rank]`
+tuples (212 kB, a fifteenth of the GeoJSON), and
+[`places.ts`](src/components/places.ts) picks at most seven per view. Each carries the
+temperature interpolated at its own position, so the labels are data, not decoration,
+and the searched city gets its name at the pin.
+
+Choosing labels is mostly about restraint — three rules, all of them about what *not*
+to draw:
+
+- *Priority.* Natural Earth's `scalerank` is the importance order, and the build
+  script pre-sorts by it, so the renderer stops at the first seven that fit. Greedy
+  by priority means a dropped label is always less important than the one that
+  displaced it.
+- *Collision.* Two half-readable names help nobody, so a label that would touch one
+  already placed is dropped instead.
+- *Bounds.* A label whose text runs past the frame gets clipped mid-word and looks
+  like a bug. Boston's map drops Bridgeport on the southern edge and labels New Haven
+  instead.
+
+Widths are measured per name rather than assumed: "Bridgeport 25°" needs more than
+twice the room of "Ely 9°", and one fixed box either lets long names collide or spaces
+short ones out for nothing.
 
 ### The coastline basemap
 
@@ -230,9 +277,16 @@ Concretely, in this project:
 - rate limiting: 429 named as such with the server's own wait time, and `Retry-After`
   shown to win over the jittered default backoff
 - stale: refresh fails, old data and banner both survive
-- map: skeleton → grid, legend and pin; hover reports the cell's reading and
-  coordinates; warmer cells take a darker ramp step; a failed grid degrades quietly
-  while the forecast stands; an all-null grid says so
+- map: skeleton → surface, legend and named pin; the drawn surface has far more cells
+  than the request had samples while hit targets stay at sample resolution; hover
+  reports a real reading and its coordinates; labelled places carry interpolated
+  temperatures and never cover the pin; a failed grid degrades quietly while the
+  forecast stands; an all-null grid says so
+- `field.test.ts`: exact values at sample points, halfway interpolation, clamping
+  instead of extrapolating, re-weighting around a missing corner, and that the
+  surface never overshoots the measured range
+- `places.test.ts`: decode order, priority collisions, per-name widths, reserved
+  space around the pin, and dropping labels that would run off the edge
 - `grid.test.ts`: row-major geometry, centring, pole and antimeridian bounds, URL
   length, longitude span vs latitude, and the bulk endpoint answering with an object
   instead of an array
@@ -250,9 +304,12 @@ Concretely, in this project:
 - No cache persistence, so stale data doesn't survive a reload.
   `@tanstack/query-sync-storage-persister` is the next step.
 - Geolocation, a °C/°F toggle, and a multi-day view are not built.
-- The basemap is coastlines only: no country or state borders, no lakes. Inland
-  cities therefore get a bare field with a coordinate frame, which is correct but
-  sparse. Borders would be another Natural Earth layer through the same pipeline.
+- The basemap is coastlines plus place labels: no country or state borders, no lakes,
+  no roads or rivers. Borders would be another Natural Earth layer through the same
+  pipeline.
+- Label widths are estimated from character count rather than measured. It
+  over-estimates, which is the safe direction — it only ever drops a label — but a
+  real text measurement would fit more of them.
 - The map samples current temperature only; there is no time scrubber.
 - The 429 path is covered by unit and UI tests against MSW, but was never observed
   live; Open-Meteo never rate-limited us hard enough to see it in the wild.

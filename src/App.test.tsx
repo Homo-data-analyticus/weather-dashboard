@@ -300,44 +300,67 @@ describe('temperature map', () => {
     await waitForElementToBeRemoved(() => screen.queryByTestId('map-skeleton'))
 
     // The fixture ramps 18..26°C, so those are the legend's ends.
-    const map = screen.getByRole('img', { name: /Temperature grid around Boston/ })
+    const map = screen.getByRole('img', { name: /Temperature around Boston/ })
     expect(map).toHaveAccessibleName(/from 18 to 26 degrees Celsius/)
     expect(screen.getByText('18°')).toBeInTheDocument()
     expect(screen.getByText('26°')).toBeInTheDocument()
 
-    // 9x9 sampled points, one cell each, plus the city pin.
-    expect(container.querySelectorAll('.map-cell')).toHaveLength(81)
+    // The pin carries the searched city's name, not just a dot.
     expect(container.querySelector('.map-pin')).toBeInTheDocument()
+    expect(container.querySelector('.map-pin-label')?.textContent).toBe('Boston')
   })
 
   it('reports the reading under the cursor', async () => {
     const { user, container } = renderApp(<App />)
     await pickBoston(user)
-    await screen.findByRole('img', { name: /Temperature grid around Boston/ })
+    await screen.findByRole('img', { name: /Temperature around Boston/ })
 
-    expect(screen.getByText('Hover a cell for its reading.')).toBeInTheDocument()
+    expect(screen.getByText('Hover the map for a sampled reading.')).toBeInTheDocument()
 
-    const cells = container.querySelectorAll('.map-cell')
+    const cells = container.querySelectorAll('.map-hit')
     await user.hover(cells[0])
 
     // North-west corner: highest latitude, lowest longitude of the box.
     expect(await screen.findByText(/°C at .+° N, .+° W$/)).toBeInTheDocument()
   })
 
-  it('paints warmer cells with a darker step than cooler ones', async () => {
+  it('draws an interpolated surface rather than one block per sample', async () => {
     const { user, container } = renderApp(<App />)
     await pickBoston(user)
-    await screen.findByRole('img', { name: /Temperature grid around Boston/ })
+    await screen.findByRole('img', { name: /Temperature around Boston/ })
 
-    // Fixture temperature is 18 + (i % 9), so cell 0 is the coolest in its run
-    // and cell 8 the warmest. Identity is carried by position on one hue ramp.
-    const cells = container.querySelectorAll('.map-cell')
-    const coolest = cells[0].getAttribute('fill')
-    const warmest = cells[8].getAttribute('fill')
-    expect(coolest).not.toBe(warmest)
-    expect(TEMPERATURE_RAMP.indexOf(warmest as never)).toBeGreaterThan(
-      TEMPERATURE_RAMP.indexOf(coolest as never),
-    )
+    // 81 samples, upsampled 4x into a 32x32 lattice plus a one-cell bleed for
+    // the blur: the visible surface has far more cells than the request did.
+    const field = container.querySelectorAll('.map-field rect')
+    expect(field.length).toBe(34 * 34)
+
+    // Hit targets stay at the sample resolution, so the readout can only ever
+    // report a real measurement.
+    expect(container.querySelectorAll('.map-hit')).toHaveLength(81)
+
+    // The surface is still on the one-hue ramp, and uses several of its steps.
+    const fills = new Set([...field].map((r) => r.getAttribute('fill')))
+    for (const fill of fills) expect(TEMPERATURE_RAMP).toContain(fill)
+    expect(fills.size).toBeGreaterThan(3)
+  })
+
+  it('labels real places, with the temperature interpolated at each', async () => {
+    const { user, container } = renderApp(<App />)
+    await pickBoston(user)
+
+    // Reference points a reader can actually use: "north of Providence" means
+    // something, "41.8 N" does not.
+    const labels = await screen.findByTestId('map-labels', {}, { timeout: 10_000 })
+    const texts = [...labels.querySelectorAll('.map-label-text')].map((t) => t.textContent)
+    expect(texts.length).toBeGreaterThan(0)
+    expect(texts.length).toBeLessThanOrEqual(7)
+    expect(texts.some((t) => t?.startsWith('Providence'))).toBe(true)
+    // Each carries a temperature sampled from the field at its own position.
+    for (const text of texts) expect(text).toMatch(/ -?\d+°$/)
+
+    // No label is allowed to sit on top of the pin.
+    const pin = container.querySelector('.map-pin-label')?.textContent
+    expect(texts.some((t) => t?.startsWith(pin!))).toBe(false)
   })
 
   it('draws the coastline basemap over the field for a coastal city', async () => {

@@ -17,8 +17,10 @@ import { quantize } from 'topojson-client'
 import { topology } from 'topojson-server'
 import { presimplify, simplify, quantile } from 'topojson-simplify'
 
-const SOURCE =
+const COASTLINE_SOURCE =
   'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_coastline.geojson'
+const PLACES_SOURCE =
+  'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_populated_places_simple.geojson'
 
 /**
  * 1e5 steps across 360° is ~0.0036° (~400 m at the equator). The plot is about
@@ -46,10 +48,11 @@ const QUANTIZATION = 1e5
 const RETAIN = 0.3
 
 const here = dirname(fileURLToPath(import.meta.url))
-const OUT = resolve(here, '../src/assets/coastline-10m.topo.json')
+const COASTLINE_OUT = resolve(here, '../src/assets/coastline-10m.topo.json')
+const PLACES_OUT = resolve(here, '../src/assets/places-10m.json')
 
-console.log(`Fetching ${SOURCE}`)
-const response = await fetch(SOURCE)
+console.log(`Fetching ${COASTLINE_SOURCE}`)
+const response = await fetch(COASTLINE_SOURCE)
 if (!response.ok) throw new Error(`Natural Earth returned ${response.status}`)
 const geojson = await response.json()
 const rawBytes = Buffer.byteLength(JSON.stringify(geojson))
@@ -68,12 +71,49 @@ topo = quantize(topo, QUANTIZATION)
 // The transform carries everything the decoder needs; bbox is dead weight.
 delete topo.bbox
 
-mkdirSync(dirname(OUT), { recursive: true })
+mkdirSync(dirname(COASTLINE_OUT), { recursive: true })
 const out = JSON.stringify(topo)
-writeFileSync(OUT, out)
+writeFileSync(COASTLINE_OUT, out)
 
 const points = topo.arcs.reduce((n, a) => n + a.length, 0)
 console.log(`GeoJSON in:   ${(rawBytes / 1e6).toFixed(2)} MB`)
 console.log(`TopoJSON out: ${(out.length / 1e6).toFixed(2)} MB`)
 console.log(`Arcs: ${topo.arcs.length}, points: ${points}`)
-console.log(`Wrote ${OUT}`)
+console.log(`Wrote ${COASTLINE_OUT}`)
+
+// --- populated places -----------------------------------------------------
+
+/**
+ * Labels are the reference the reader actually uses: "north of Providence"
+ * means something, "41.8 N" does not. Natural Earth's populated places carry a
+ * `scalerank` (0 = world city, 10 = small town) which is exactly the priority
+ * order a label layer needs when it has to drop some.
+ *
+ * Stored as flat tuples rather than GeoJSON: the same 7342 places are 4.9 MB of
+ * features and about a fifteenth of that as [name, lon, lat, rank].
+ */
+console.log(`Fetching ${PLACES_SOURCE}`)
+const placesResponse = await fetch(PLACES_SOURCE)
+if (!placesResponse.ok) throw new Error(`Natural Earth returned ${placesResponse.status}`)
+const placesGeo = await placesResponse.json()
+
+const places = placesGeo.features
+  .map((f) => {
+    const [lon, lat] = f.geometry.coordinates
+    const { name, scalerank } = f.properties
+    // 3 decimals is ~110 m: a label dot does not need better.
+    return [name, round3(lon), round3(lat), scalerank]
+  })
+  .filter(([name]) => typeof name === 'string' && name.length > 0)
+  // Most important first, so the renderer can stop at the first N that fit.
+  .sort((a, b) => a[3] - b[3])
+
+const placesOut = JSON.stringify(places)
+writeFileSync(PLACES_OUT, placesOut)
+console.log(`Places in:  ${(JSON.stringify(placesGeo).length / 1e6).toFixed(2)} MB`)
+console.log(`Places out: ${(placesOut.length / 1e6).toFixed(2)} MB (${places.length} places)`)
+console.log(`Wrote ${PLACES_OUT}`)
+
+function round3(n) {
+  return Math.round(n * 1e3) / 1e3
+}

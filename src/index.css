@@ -123,6 +123,8 @@ h2 { font-size: 1.15rem; margin: 0; }
   --map-pin-dot: #0b0b0b;
   --map-ring: #0b0b0b;
   --map-coast: #1a1a19;
+  --map-label-ink: #101010;
+  --map-label-casing: rgba(252, 252, 251, 0.92);
   --map-coast-casing: rgba(252, 252, 251, 0.85);
 }
 
@@ -134,6 +136,8 @@ h2 { font-size: 1.15rem; margin: 0; }
     --map-pin-dot: #ffffff;
     --map-ring: #ffffff;
     --map-coast: #ffffff;
+    --map-label-ink: #ffffff;
+    --map-label-casing: rgba(10, 10, 10, 0.88);
     --map-coast-casing: rgba(13, 13, 13, 0.8);
   }
 }
@@ -149,11 +153,17 @@ h2 { font-size: 1.15rem; margin: 0; }
   overflow: visible;
 }
 
-.map-cell {
+/* The interpolated surface. crispEdges keeps antialiasing from adding its own
+   seams between the ~1100 rects before the blur ever sees them. */
+.map-field rect {
   stroke: none;
-  /* Antialiasing between abutting rects leaves pale seams that read as a grid
-     the data does not have. This is a lattice of whole cells, so snap it. */
   shape-rendering: crispEdges;
+}
+
+/* Invisible hit targets over the real sample points. */
+.map-hit {
+  fill: transparent;
+  stroke: none;
 }
 .map-coast path {
   fill: none;
@@ -164,6 +174,40 @@ h2 { font-size: 1.15rem; margin: 0; }
 }
 .map-coast-casing { stroke: var(--map-coast-casing); stroke-width: 3.5; }
 .map-coast-line { stroke: var(--map-coast); stroke-width: 1.2; }
+
+/* Place labels and the pin: name, then temperature, each stroked twice so it
+   survives any step of the ramp underneath. */
+.map-label-text,
+.map-pin-label {
+  font-size: 3.6px;
+  font-weight: 600;
+  fill: var(--map-label-ink);
+  paint-order: stroke;
+}
+.map-label-casing,
+.map-pin-label-casing {
+  font-size: 3.6px;
+  font-weight: 600;
+  fill: none;
+  stroke: var(--map-label-casing);
+  stroke-width: 2.4;
+  stroke-linejoin: round;
+}
+.map-pin-label,
+.map-pin-label-casing {
+  font-size: 4.4px;
+  font-weight: 700;
+}
+.map-label-dot {
+  fill: var(--map-label-ink);
+  stroke: var(--map-label-casing);
+  stroke-width: 0.7;
+}
+.map-label,
+.map-labels text,
+.map-pin text {
+  pointer-events: none;
+}
 
 .map-cell-ring {
   fill: none;
