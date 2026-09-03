@@ -113,3 +113,111 @@ h2 { font-size: 1.15rem; margin: 0; }
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
+
+/* --- temperature map ---------------------------------------------------- */
+
+:root {
+  --map-gap: #e6e5e0;        /* no reading: never a ramp color */
+  --map-frame: #d6d5ce;
+  --map-pin-halo: #fcfcfb;
+  --map-pin-dot: #0b0b0b;
+  --map-ring: #0b0b0b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --map-gap: #2a2a28;
+    --map-frame: #33332f;
+    --map-pin-halo: #0d0d0d;
+    --map-pin-dot: #ffffff;
+    --map-ring: #ffffff;
+  }
+}
+
+.map-title { font-size: 1.05rem; }
+.map-figure { margin: 1rem 0 0; }
+
+.map-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+  overflow: visible;
+}
+
+.map-cell {
+  stroke: none;
+  /* Antialiasing between abutting rects leaves pale seams that read as a grid
+     the data does not have. This is a lattice of whole cells, so snap it. */
+  shape-rendering: crispEdges;
+}
+.map-cell-ring {
+  fill: none;
+  stroke: var(--map-ring);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.map-axis text {
+  font-size: 4.2px;
+  fill: var(--subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+
+.map-pin-halo { fill: var(--map-pin-halo); }
+.map-pin-dot { fill: var(--map-pin-dot); }
+
+.map-frame {
+  fill: none;
+  stroke: var(--map-frame);
+  stroke-width: 0.8;
+  rx: 1;
+}
+
+.map-caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin: 0.7rem 0 0;
+}
+
+.map-legend { display: flex; align-items: center; gap: 0.4rem; }
+.map-legend-end {
+  font-size: 0.78rem;
+  color: var(--subtle);
+  font-variant-numeric: tabular-nums;
+}
+.map-legend-ramp { display: flex; height: 0.55rem; width: 8rem; border-radius: 999px; overflow: hidden; }
+.map-legend-ramp span { flex: 1; }
+.map-legend-label { font-size: 0.75rem; color: var(--subtle); }
+
+.map-readout {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.map-unavailable {
+  margin: 1rem 0 0;
+  font-size: 0.88rem;
+  color: var(--subtle);
+}
+
+.link-button {
+  font: inherit;
+  font-size: inherit;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.link-button:disabled { opacity: 0.6; cursor: default; }
+
+.map-skeleton { width: 100%; aspect-ratio: 3 / 2; border-radius: 0.5rem; }

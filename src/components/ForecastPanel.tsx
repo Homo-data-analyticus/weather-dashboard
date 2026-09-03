@@ -10,6 +10,8 @@ export function ForecastPanel({ place }: { place: Place }) {
   const { data, error, isError, isPending, isFetching, dataUpdatedAt, failureCount, refetch } = query
   // Never gated on. If this fails we render numbers without decoration.
   const extras = useEnhancements(place).data ?? null
+  // Names the panel as a landmark, so it is distinguishable from the map below.
+  const headingId = `forecast-heading-${place.id}`
 
   // First load for this place: nothing to show but structure.
   if (isPending) return <ForecastSkeleton />
@@ -31,8 +33,8 @@ export function ForecastPanel({ place }: { place: Place }) {
   // The service answered, correctly, with nothing useful.
   if (data.hourly.length === 0) {
     return (
-      <section className="card">
-        <h2>{place.name}</h2>
+      <section className="card" aria-labelledby={headingId}>
+        <h2 id={headingId}>{place.name}</h2>
         <p className="empty">
           No hourly forecast is published for this location right now. Current conditions below are
           still accurate.
@@ -47,10 +49,13 @@ export function ForecastPanel({ place }: { place: Place }) {
       {isError && (
         <StaleBanner updatedAt={dataUpdatedAt} onRetry={() => refetch()} isRetrying={isFetching} />
       )}
-      <section className={`card${isFetching ? ' card--refreshing' : ''}`}>
+      <section
+        className={`card${isFetching ? ' card--refreshing' : ''}`}
+        aria-labelledby={headingId}
+      >
         <header className="card-head">
           <div>
-            <h2>
+            <h2 id={headingId}>
               {place.name}
               {place.admin1 ? `, ${place.admin1}` : ''}
             </h2>

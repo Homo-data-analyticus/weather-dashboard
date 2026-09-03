@@ -1,10 +1,17 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { fetchEnhancements, fetchForecast, searchPlaces, type Place } from '../api/weather'
+import {
+  fetchEnhancements,
+  fetchForecast,
+  fetchTemperatureGrid,
+  searchPlaces,
+  type Place,
+} from '../api/weather'
 
 export const queryKeys = {
   places: (query: string) => ['places', query] as const,
   forecast: (place: Place) => ['forecast', place.latitude, place.longitude] as const,
   enhancements: (place: Place) => ['enhancements', place.latitude, place.longitude] as const,
+  grid: (place: Place) => ['grid', place.latitude, place.longitude] as const,
 }
 
 export function usePlaceSearch(query: string) {
@@ -41,5 +48,22 @@ export function useEnhancements(place: Place | null) {
     // Decorative data is not worth hammering a struggling endpoint for.
     retry: 1,
     staleTime: 10 * 60_000,
+  })
+}
+
+/**
+ * The regional temperature grid behind the map. Same contract as the
+ * enhancement query: its own retry budget, and nothing blocks on it.
+ */
+export function useTemperatureGrid(place: Place | null) {
+  return useQuery({
+    queryKey: place ? queryKeys.grid(place) : ['grid', 'none'],
+    queryFn: ({ signal }) => fetchTemperatureGrid(place!, { signal }),
+    enabled: place != null,
+    retry: 1,
+    // 81 coordinates is a heavy request by this API's accounting. Ten minutes
+    // of cache is the difference between a map and a rate-limit problem.
+    staleTime: 10 * 60_000,
+    refetchInterval: false,
   })
 }

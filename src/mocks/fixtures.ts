@@ -72,3 +72,20 @@ export function enhancementsFixture() {
 
 /** HTTP 200, valid JSON, and a failure anyway. Open-Meteo's overload response. */
 export const overloadedEnvelope = { error: true, reason: 'The service is overloaded' }
+
+/**
+ * One bulk-request entry per coordinate, in request order. `warmSpot` puts a
+ * deterministic hot cell in the grid so the color scale has something to prove.
+ */
+export function gridFixture(points: Array<{ latitude: number; longitude: number }>) {
+  return points.map((p, i) => ({
+    latitude: p.latitude,
+    longitude: p.longitude,
+    current: { time: '2026-09-02T14:00', interval: 900, temperature_2m: 18 + (i % 9) },
+  }))
+}
+
+/** A grid where every point answers, but none of them with a usable number. */
+export function gridWithNoReadings(points: Array<{ latitude: number; longitude: number }>) {
+  return points.map((p) => ({ latitude: p.latitude, longitude: p.longitude, current: {} }))
+}

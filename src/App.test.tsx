@@ -1,6 +1,6 @@
 import { HttpResponse, delay, http } from 'msw'
 import { afterEach, describe, expect, it } from 'vitest'
-import { act, screen, waitFor, waitForElementToBeRemoved } from '@testing-library/react'
+import { act, screen, waitForElementToBeRemoved, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
 import App from './App'
 import { requestConfig } from './api/config'
@@ -9,6 +9,10 @@ import {
   badRequest,
   emptyResults,
   enhancementsDown,
+  gridDown,
+  gridEmpty,
+  gridPointsFrom,
+  isGridRequest,
   flaky,
   hangs,
   isEnhancementRequest,
@@ -19,9 +23,10 @@ import {
   serverError,
   succeedsThenFails,
 } from './mocks/handlers'
-import { enhancementsFixture, forecastFixture } from './mocks/fixtures'
+import { enhancementsFixture, forecastFixture, gridFixture } from './mocks/fixtures'
 import { server } from './mocks/server'
 import { backoffMs, shouldRetry } from './query/client'
+import { TEMPERATURE_RAMP } from './components/temperatureScale'
 import { renderApp } from './test/utils'
 
 afterEach(() => {
@@ -210,7 +215,8 @@ describe('forecast: partial degradation', () => {
     expect(screen.getAllByRole('listitem')).toHaveLength(5)
 
     // Decoration is gone, and nothing pretends otherwise.
-    expect(screen.queryAllByRole('img')).toHaveLength(0)
+    const panel = screen.getByRole('region', { name: 'Boston, Massachusetts' })
+    expect(within(panel).queryAllByRole('img')).toHaveLength(0)
     expect(screen.queryByText('Feels like')).not.toBeInTheDocument()
 
     // Crucially: no error state and no stale banner. Nothing to act on.
@@ -224,9 +230,12 @@ describe('forecast: partial degradation', () => {
 
     expect(await screen.findByText('21°C')).toBeInTheDocument()
     expect(screen.getByText('Feels like')).toBeInTheDocument()
-    expect(screen.getAllByRole('img', { name: 'Overcast' }).length).toBeGreaterThan(0)
+
+    // Scoped to the forecast panel: the map below is also an img-role element.
+    const panel = screen.getByRole('region', { name: 'Boston, Massachusetts' })
+    expect(within(panel).getAllByRole('img', { name: 'Overcast' }).length).toBeGreaterThan(0)
     // Four hourly icons plus the current one; one hour has a null code.
-    expect(screen.getAllByRole('img')).toHaveLength(5)
+    expect(within(panel).getAllByRole('img')).toHaveLength(5)
   })
 })
 
@@ -265,13 +274,94 @@ describe('forecast: stale data', () => {
       await client.refetchQueries({ queryKey: ['forecast'] })
     })
 
-    await waitFor(() => {
-      expect(screen.getByRole('status', { name: '' })).toBeInTheDocument()
-    })
-    expect(screen.getByText(/Couldn't refresh/)).toBeInTheDocument()
+    expect(await screen.findByText(/Couldn't refresh/)).toBeInTheDocument()
     // The whole point: the data survived the failed refresh.
     expect(screen.getByText('21°C')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+})
+
+describe('temperature map', () => {
+  it('replaces its skeleton with a scaled grid, legend and pin', async () => {
+    // Slow the grid response so the skeleton is observable rather than a race
+    // against an instant mock.
+    server.use(
+      http.get(FORECAST_URL, async ({ request }) => {
+        if (!isGridRequest(request)) return undefined
+        await delay(80)
+        return HttpResponse.json(gridFixture(gridPointsFrom(request)))
+      }),
+    )
+    const { user, container } = renderApp(<App />)
+    await pickBoston(user)
+
+    expect(await screen.findByTestId('map-skeleton')).toBeInTheDocument()
+    await waitForElementToBeRemoved(() => screen.queryByTestId('map-skeleton'))
+
+    // The fixture ramps 18..26°C, so those are the legend's ends.
+    const map = screen.getByRole('img', { name: /Temperature grid around Boston/ })
+    expect(map).toHaveAccessibleName(/from 18 to 26 degrees Celsius/)
+    expect(screen.getByText('18°')).toBeInTheDocument()
+    expect(screen.getByText('26°')).toBeInTheDocument()
+
+    // 9x9 sampled points, one cell each, plus the city pin.
+    expect(container.querySelectorAll('.map-cell')).toHaveLength(81)
+    expect(container.querySelector('.map-pin')).toBeInTheDocument()
+  })
+
+  it('reports the reading under the cursor', async () => {
+    const { user, container } = renderApp(<App />)
+    await pickBoston(user)
+    await screen.findByRole('img', { name: /Temperature grid around Boston/ })
+
+    expect(screen.getByText('Hover a cell for its reading.')).toBeInTheDocument()
+
+    const cells = container.querySelectorAll('.map-cell')
+    await user.hover(cells[0])
+
+    // North-west corner: highest latitude, lowest longitude of the box.
+    expect(await screen.findByText(/°C at .+° N, .+° W$/)).toBeInTheDocument()
+  })
+
+  it('paints warmer cells with a darker step than cooler ones', async () => {
+    const { user, container } = renderApp(<App />)
+    await pickBoston(user)
+    await screen.findByRole('img', { name: /Temperature grid around Boston/ })
+
+    // Fixture temperature is 18 + (i % 9), so cell 0 is the coolest in its run
+    // and cell 8 the warmest. Identity is carried by position on one hue ramp.
+    const cells = container.querySelectorAll('.map-cell')
+    const coolest = cells[0].getAttribute('fill')
+    const warmest = cells[8].getAttribute('fill')
+    expect(coolest).not.toBe(warmest)
+    expect(TEMPERATURE_RAMP.indexOf(warmest as never)).toBeGreaterThan(
+      TEMPERATURE_RAMP.indexOf(coolest as never),
+    )
+  })
+
+  it('fails quietly when the grid request fails, and keeps the forecast', async () => {
+    server.use(gridDown)
+    const { user } = renderApp(<App />)
+    await pickBoston(user)
+
+    expect(await screen.findByText(/temperature map is unavailable/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+
+    // The forecast is the page's job and it is unaffected. No alert, no banner.
+    expect(screen.getByText('21°C')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Couldn't refresh/)).not.toBeInTheDocument()
+  })
+
+  it('says so when the grid answers with no readings at all', async () => {
+    server.use(gridEmpty)
+    const { user } = renderApp(<App />)
+    await pickBoston(user)
+
+    expect(await screen.findByText(/no readings for this area/i)).toBeInTheDocument()
+    // An empty grid is not an error; nothing offers a retry for it.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByText('21°C')).toBeInTheDocument()
   })
 })

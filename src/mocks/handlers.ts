@@ -4,6 +4,8 @@ import {
   bostonGeocode,
   enhancementsFixture,
   forecastFixture,
+  gridFixture,
+  gridWithNoReadings,
   noGeocodeResults,
   overloadedEnvelope,
 } from './fixtures'
@@ -17,6 +19,19 @@ export function isEnhancementRequest(request: Request) {
   return new URL(request.url).searchParams.get('current') === ENHANCEMENT_CURRENT
 }
 
+/** The map's bulk request: many coordinates in one call, comma-separated. */
+export function isGridRequest(request: Request) {
+  return (new URL(request.url).searchParams.get('latitude') ?? '').includes(',')
+}
+
+/** The coordinates a grid request asked for, in order. */
+export function gridPointsFrom(request: Request) {
+  const params = new URL(request.url).searchParams
+  const lats = (params.get('latitude') ?? '').split(',')
+  const lons = (params.get('longitude') ?? '').split(',')
+  return lats.map((lat, i) => ({ latitude: Number(lat), longitude: Number(lons[i]) }))
+}
+
 /** The happy path. Everything else in this file is an override on top of it. */
 export const handlers = [
   http.get(GEOCODE_URL, ({ request }) => {
@@ -24,11 +39,11 @@ export const handlers = [
     if (!name.toLowerCase().startsWith('bos')) return HttpResponse.json(noGeocodeResults)
     return HttpResponse.json(bostonGeocode)
   }),
-  http.get(FORECAST_URL, ({ request }) =>
-    isEnhancementRequest(request)
-      ? HttpResponse.json(enhancementsFixture())
-      : HttpResponse.json(forecastFixture()),
-  ),
+  http.get(FORECAST_URL, ({ request }) => {
+    if (isGridRequest(request)) return HttpResponse.json(gridFixture(gridPointsFrom(request)))
+    if (isEnhancementRequest(request)) return HttpResponse.json(enhancementsFixture())
+    return HttpResponse.json(forecastFixture())
+  }),
 ]
 
 /**
@@ -38,7 +53,7 @@ export const handlers = [
  */
 function essentialOnly(resolver: () => Response | Promise<Response>) {
   return ({ request }: { request: Request }) =>
-    isEnhancementRequest(request) ? undefined : resolver()
+    isEnhancementRequest(request) || isGridRequest(request) ? undefined : resolver()
 }
 
 // --- scenario overrides, one per UI state worth asserting -----------------
@@ -151,3 +166,24 @@ export const succeedsThenFails = (url: string = FORECAST_URL) => {
     }),
   )
 }
+
+/** The map's request fails; the forecast underneath it does not. */
+export const gridDown = http.get(FORECAST_URL, ({ request }) => {
+  if (!isGridRequest(request)) return undefined
+  return HttpResponse.json({ error: true, reason: 'The service is overloaded' }, { status: 503 })
+})
+
+/** Every coordinate answers, none with a number. */
+export const gridEmpty = http.get(FORECAST_URL, ({ request }) => {
+  if (!isGridRequest(request)) return undefined
+  return HttpResponse.json(gridWithNoReadings(gridPointsFrom(request)))
+})
+
+/**
+ * The bulk endpoint answering like a single-coordinate one: an object, not an
+ * array. Silently rendering this would produce an empty map with no explanation.
+ */
+export const gridReturnsObject = http.get(FORECAST_URL, ({ request }) => {
+  if (!isGridRequest(request)) return undefined
+  return HttpResponse.json(forecastFixture())
+})

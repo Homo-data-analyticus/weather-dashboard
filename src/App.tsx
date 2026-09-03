@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Place } from './api/weather'
 import { ErrorState } from './components/ErrorState'
 import { ForecastPanel } from './components/ForecastPanel'
+import { WeatherMap } from './components/WeatherMap'
 import { ResultsSkeleton } from './components/Skeletons'
 import { useDebounced } from './hooks/useDebounced'
 import { usePlaceSearch } from './hooks/useForecast'
@@ -63,7 +64,12 @@ export default function App() {
         </>
       )}
 
-      {place && <ForecastPanel place={place} />}
+      {place && (
+        <>
+          <ForecastPanel place={place} />
+          <WeatherMap place={place} />
+        </>
+      )}
 
       {!place && !showResults && (
         <p className="empty">Search for a city to see current conditions and the next 12 hours.</p>

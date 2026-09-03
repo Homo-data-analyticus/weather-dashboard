@@ -25,6 +25,9 @@ npm test
 | Error, no cache | `isError && !data` | [`ErrorState.tsx`](src/components/ErrorState.tsx) |
 | Stale + failed refresh | `isError && data` | [`StaleBanner.tsx`](src/components/StaleBanner.tsx) |
 | Refreshing | `isFetching` with data on screen | dimmed card + "Updating…" |
+| Map loading | grid query pending | [`WeatherMap.tsx`](src/components/WeatherMap.tsx) |
+| Map failed | grid query rejected | quiet inline note + retry, never an alert |
+| Map empty | grid returned no readings | [`WeatherMap.tsx`](src/components/WeatherMap.tsx) |
 
 ## Five decisions worth stealing
 
@@ -84,6 +87,57 @@ The cost is one extra request per city, debounced and cached for a minute. The b
 is a dashboard that still works during a partial outage — which is not a hypothetical
 here.
 
+## The temperature map
+
+A flat map of current temperature around the selected city: a 9x9 grid of sample
+points, shaded by temperature, with the city pinned at the centre.
+
+**It is one request, not 81.** Open-Meteo accepts comma-separated `latitude` and
+`longitude` and answers with an array in request order, so the whole grid costs a
+single call (~200 ms, ~33 KB, a 1.6 KB URL). Coordinates are rounded to four
+decimals — ~11 m, far finer than the model resolution — to keep that URL short.
+
+**The projection is equidistant cylindrical with the standard parallel at the map's
+centre.** A degree of longitude narrows with `cos(latitude)`, so a square degree box
+is only square at the equator. `lonSpanFor()` derives the longitude span from the
+latitude span instead, which keeps the map scale-true at any latitude rather than
+silently stretching Norway. The plotted aspect falls out of that.
+
+**Cells are placed from the coordinates we asked for, not the ones echoed back.** The
+API snaps every point to its model grid (37.0 comes back as 36.9909), so trusting the
+response would render a subtly ragged lattice.
+
+**It fails like the enhancement query, because that is what it is.** Own query, own
+retry budget, nothing waits on it. A failed grid is a one-line note with a retry —
+not an alert and not a red box, because the forecast above it is still correct and
+there is nothing the reader must act on.
+
+### About the color
+
+Temperature is a **magnitude**, so the scale is sequential: one hue, light to dark,
+never a rainbow. The hue is the design system's orange rather than its default
+sequential blue, because "darker blue = hotter" fights an association every reader
+already has.
+
+The ramp is the documented blue ramp's exact OKLCH *lightness* skeleton re-hued to
+orange, so lightness stays monotonic across the ramp — the check that actually applies
+to a sequential scale, and one this repo verifies in
+[`temperatureScale.test.ts`](src/components/temperatureScale.test.ts) rather than
+eyeballing.
+
+Two consequences worth knowing:
+
+- **The anchor flips in dark mode.** A sequential ramp's low end has to recede toward
+  the surface it sits on, so cool is pale on white and dark on black. The map therefore
+  inverts between themes; the legend is always on screen, labelled with both bounds, so
+  which end is which is never left to memory.
+- **A degenerate range takes the ramp's midpoint.** If every point reads the same
+  temperature there is no magnitude to encode, and dividing by a zero span would paint
+  the whole map an extreme — implying variation that is not there.
+
+Missing readings get a neutral gap color that is deliberately not a ramp step, so
+"no data" can never be misread as "cold".
+
 ## Why MSW instead of stubbing fetch
 
 `vi.mock('fetch')` asserts that your component calls a function you wrote. MSW asserts
@@ -109,6 +163,9 @@ Concretely, in this project:
   hand-written stubs encode what you *assume* an API returns.
 - `noGeocodeResults` is `{}`, because that is what Open-Meteo really sends when nothing
   matches — not `{ results: [] }`.
+- The grid handlers read the request's own coordinate list and answer one entry per
+  point, so the geometry the app sends is the geometry the mock replies to. A stub
+  returning a fixed array would pass even if the app requested the wrong box.
 - The same handlers run in the browser (`npm run dev:mock`), so the states you assert
   in tests are states you can look at.
 
@@ -125,6 +182,14 @@ Concretely, in this project:
 - rate limiting: 429 named as such with the server's own wait time, and `Retry-After`
   shown to win over the jittered default backoff
 - stale: refresh fails, old data and banner both survive
+- map: skeleton → grid, legend and pin; hover reports the cell's reading and
+  coordinates; warmer cells take a darker ramp step; a failed grid degrades quietly
+  while the forecast stands; an all-null grid says so
+- `grid.test.ts`: row-major geometry, centring, pole and antimeridian bounds, URL
+  length, longitude span vs latitude, and the bulk endpoint answering with an object
+  instead of an array
+- `temperatureScale.test.ts`: dark-mode anchor flip, monotonic steps, the gap color,
+  and the degenerate-range midpoint
 - `http.test.ts`: timeout, 4xx/5xx mapping, `reason` extraction, `Retry-After`, cancellation
 - `client.test.ts`: retry predicate and backoff bounds
 - `weather.test.ts`: column→row transposition, null handling, dropping past hours
@@ -134,5 +199,9 @@ Concretely, in this project:
 - No cache persistence, so stale data doesn't survive a reload.
   `@tanstack/query-sync-storage-persister` is the next step.
 - Geolocation, a °C/°F toggle, and a multi-day view are not built.
+- The map has no coastlines or borders — it is a bare field with a coordinate frame.
+  Real geography would mean shipping a TopoJSON basemap, which is a size and licensing
+  decision, not a rendering one.
+- The map samples current temperature only; there is no time scrubber.
 - The 429 path is covered by unit and UI tests against MSW, but was never observed
   live; Open-Meteo never rate-limited us hard enough to see it in the wild.
