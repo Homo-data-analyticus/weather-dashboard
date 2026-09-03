@@ -1,6 +1,8 @@
 import { useId, useState } from 'react'
 import type { GridCell, Place, TemperatureGrid } from '../api/weather'
+import { useCoastlines } from '../hooks/useCoastlines'
 import { useTemperatureGrid } from '../hooks/useForecast'
+import { visibleCoastPaths } from './basemap'
 import { usePrefersDark } from '../hooks/usePrefersDark'
 import { colorForTemperature, rampFor } from './temperatureScale'
 
@@ -60,6 +62,7 @@ function GridPlot({
   const [hovered, setHovered] = useState<GridCell | null>(null)
   const clipId = useId()
   const ramp = rampFor(isDark)
+  const coastlines = useCoastlines()
 
   // Longitude was sampled wider than latitude so that the plotted box comes out
   // landscape at true scale; recover that aspect for the viewBox.
@@ -87,6 +90,16 @@ function GridPlot({
   const latMin = grid.center.latitude - grid.spanLat
   const lonMin = grid.center.longitude - grid.spanLon
   const lonMax = grid.center.longitude + grid.spanLon
+
+  // x and y are linear in longitude and latitude: the plot box spans exactly
+  // the sampled extent, so the basemap and the cells share one transform.
+  const project = (lon: number, lat: number): [number, number] => [
+    ((lon - lonMin) / (lonMax - lonMin)) * VB_W,
+    ((latMax - lat) / (latMax - latMin)) * VB_H,
+  ]
+  const coastPaths = coastlines
+    ? visibleCoastPaths(coastlines, { lonMin, lonMax, latMin, latMax }, project)
+    : []
 
   return (
     <figure className="map-figure">
@@ -119,6 +132,21 @@ function GridPlot({
                 onMouseEnter={() => setHovered(cell)}
               />
             ))}
+
+            {/* Coastlines sit above the field: they are reference, and the
+                reader needs to see which cells are over water. Each is drawn
+                twice -- a surface-coloured casing under a thin ink stroke --
+                so it stays legible over any step of the ramp. */}
+            {coastPaths.length > 0 && (
+              <g className="map-coast" data-testid="map-coastlines">
+                {coastPaths.map((d, i) => (
+                  <path key={`casing-${i}`} className="map-coast-casing" d={d} />
+                ))}
+                {coastPaths.map((d, i) => (
+                  <path key={`line-${i}`} className="map-coast-line" d={d} />
+                ))}
+              </g>
+            )}
 
             {/* The ring is drawn after every cell, not as a style on the
                 hovered one: a stroke sits on the shared edge, so the cells

@@ -28,6 +28,7 @@ npm test
 | Map loading | grid query pending | [`WeatherMap.tsx`](src/components/WeatherMap.tsx) |
 | Map failed | grid query rejected | quiet inline note + retry, never an alert |
 | Map empty | grid returned no readings | [`WeatherMap.tsx`](src/components/WeatherMap.tsx) |
+| Basemap absent | coastline chunk still loading, or inland | draws nothing, says nothing |
 
 ## Five decisions worth stealing
 
@@ -112,6 +113,53 @@ retry budget, nothing waits on it. A failed grid is a one-line note with a retry
 not an alert and not a red box, because the forecast above it is still correct and
 there is nothing the reader must act on.
 
+### The coastline basemap
+
+Natural Earth coastlines, bundled as TopoJSON and drawn over the temperature
+field. Rebuild it with `npm run build:basemap`; the output is committed, so a
+normal install never touches the network.
+
+**Resolution is the whole decision.** The map renders a box roughly 250 km tall,
+where one screen pixel is about 800 m. Natural Earth's 110m data — the size
+everyone reaches for first, and what `world-atlas` ships — generalizes detail at
+tens of kilometres, which erases entire bays at this zoom. 10m is the coarsest
+source that still looks like the coast.
+
+Full 10m is ~411k points and 12.3 MB quantized, which is not a basemap, it is a
+download. [`scripts/build-basemap.mjs`](scripts/build-basemap.mjs) simplifies it to
+129k points / 1.28 MB (364 kB gzipped) and records the measured size at each
+threshold, so the trade is visible rather than a magic number. Going finer means
+tiling the world and fetching only the viewport — a different and much larger
+piece of work.
+
+Pipeline order matters: `presimplify` **dequantizes**, so quantizing before it
+produces output *larger* than the input. Quantize last.
+
+**It costs nothing on load.** The geometry is a dynamic `import()`, so it lands in
+its own chunk — the app bundle stays at ~77 kB gzipped — and arrives after the map
+has already rendered. If it never arrives, there is simply no outline; the reader
+is not told, because there is nothing they could do.
+
+**No projection library.** The map is equirectangular, so longitude and latitude map
+linearly onto x and y — the exact transform the temperature cells already use.
+Reusing it is not a shortcut but the requirement: a projected basemap over an
+unprojected data layer would not line up.
+
+**A bounding box is only a hint.** One arc can run the length of a continent, so its
+box covers land it never touches — the first version drew the Gulf coast's arc for
+Wichita, Kansas, and relied on the clip path to hide it. `visibleCoastPaths` now
+tests each *segment* and emits only the runs that reach the view. Inland cities draw
+nothing at all, and Boston's coast is 16 short subpaths (~2.6 kB of path data)
+rather than one arc with thousands of points.
+
+Two details that are easy to get wrong and are covered by tests: a jump of more than
+180° between consecutive points is the antimeridian seam, not a segment, so the pen
+lifts rather than drawing a line across the map; and a view running past ±180 also
+considers every line shifted a full turn, so Fiji gets a coastline.
+
+Each outline is stroked twice — a surface-coloured casing under a thin ink stroke —
+so it stays legible over any step of the ramp.
+
 ### About the color
 
 Temperature is a **magnitude**, so the scale is sequential: one hue, light to dark,
@@ -190,6 +238,9 @@ Concretely, in this project:
   instead of an array
 - `temperatureScale.test.ts`: dark-mode anchor flip, monotonic steps, the gap color,
   and the degenerate-range midpoint
+- `basemap.test.ts`: decoding and memoizing the bundled topology, coast found off
+  Boston and absent at Point Nemo and in central Kazakhstan, the antimeridian both
+  ways, and the long-arc bounding-box false positive that made Kansas coastal
 - `http.test.ts`: timeout, 4xx/5xx mapping, `reason` extraction, `Retry-After`, cancellation
 - `client.test.ts`: retry predicate and backoff bounds
 - `weather.test.ts`: column→row transposition, null handling, dropping past hours
@@ -199,9 +250,9 @@ Concretely, in this project:
 - No cache persistence, so stale data doesn't survive a reload.
   `@tanstack/query-sync-storage-persister` is the next step.
 - Geolocation, a °C/°F toggle, and a multi-day view are not built.
-- The map has no coastlines or borders — it is a bare field with a coordinate frame.
-  Real geography would mean shipping a TopoJSON basemap, which is a size and licensing
-  decision, not a rendering one.
+- The basemap is coastlines only: no country or state borders, no lakes. Inland
+  cities therefore get a bare field with a coordinate frame, which is correct but
+  sparse. Borders would be another Natural Earth layer through the same pipeline.
 - The map samples current temperature only; there is no time scrubber.
 - The 429 path is covered by unit and UI tests against MSW, but was never observed
   live; Open-Meteo never rate-limited us hard enough to see it in the wild.

@@ -122,6 +122,8 @@ h2 { font-size: 1.15rem; margin: 0; }
   --map-pin-halo: #fcfcfb;
   --map-pin-dot: #0b0b0b;
   --map-ring: #0b0b0b;
+  --map-coast: #1a1a19;
+  --map-coast-casing: rgba(252, 252, 251, 0.85);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -131,6 +133,8 @@ h2 { font-size: 1.15rem; margin: 0; }
     --map-pin-halo: #0d0d0d;
     --map-pin-dot: #ffffff;
     --map-ring: #ffffff;
+    --map-coast: #ffffff;
+    --map-coast-casing: rgba(13, 13, 13, 0.8);
   }
 }
 
@@ -151,6 +155,16 @@ h2 { font-size: 1.15rem; margin: 0; }
      the data does not have. This is a lattice of whole cells, so snap it. */
   shape-rendering: crispEdges;
 }
+.map-coast path {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+.map-coast-casing { stroke: var(--map-coast-casing); stroke-width: 3.5; }
+.map-coast-line { stroke: var(--map-coast); stroke-width: 1.2; }
+
 .map-cell-ring {
   fill: none;
   stroke: var(--map-ring);

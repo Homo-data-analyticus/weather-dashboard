@@ -340,6 +340,24 @@ describe('temperature map', () => {
     )
   })
 
+  it('draws the coastline basemap over the field for a coastal city', async () => {
+    const { user, container } = renderApp(<App />)
+    await pickBoston(user)
+
+    // The basemap arrives on its own schedule: a lazily imported chunk, not a
+    // query, so the map renders first and the outline lands afterwards.
+    const coast = await screen.findByTestId('map-coastlines', {}, { timeout: 10_000 })
+    const paths = coast.querySelectorAll('path')
+    expect(paths.length).toBeGreaterThan(0)
+    expect(paths[0].getAttribute('d')).toMatch(/^M-?[\d.]+ -?[\d.]+/)
+
+    // Every outline is drawn twice: a casing under a stroke, so it reads over
+    // any step of the ramp.
+    expect(container.querySelectorAll('.map-coast-casing').length).toBe(
+      container.querySelectorAll('.map-coast-line').length,
+    )
+  })
+
   it('fails quietly when the grid request fails, and keeps the forecast', async () => {
     server.use(gridDown)
     const { user } = renderApp(<App />)
